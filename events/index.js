@@ -50,6 +50,14 @@ const users = db.define('Users', {
     type: DataTypes.STRING,
     required: true,
   },
+  city: {
+    type: DataTypes.STRING,
+    required: true,
+  },
+  state: {
+    type: DataTypes.STRING,
+    required: true,
+  },
 });
 
 users.hasMany(subs, {
@@ -65,7 +73,7 @@ const client = mailgun.client({
   key: process.env.MAILGUN_KEY,
 });
 
-const getEvents = socket => ( async () => {
+async function getEvents(city, stateCode) {
   try {
 
     const currentDate = new Date();
@@ -77,8 +85,6 @@ const getEvents = socket => ( async () => {
 
 
     let apikey = process.env.TICKET_API;
-    let city = 'seattle';
-    let stateCode = 'wa';
     let radius = '20';
     let unit = 'miles';
 
@@ -127,74 +133,22 @@ const getEvents = socket => ( async () => {
 
       eventList += `<li>${eventName} at ${venue} on ${eventStartDate} at ${newTime}, Link: ${eventUrl}</li>`;
     }
-
-    const msg = {
-      to: 'steveo732@gmail.com',
-      from: 'notifyme.us@gmail.com',
-      subject: 'Check Out These 5 events happening this week!',
-      text: `Five Upcoming Events in your Area: ${eventList}`,
-      html: `<p>Five Upcoming Events in your Area:</p>
-             <ul>
-               ${eventList}
-             </ul>`,
-    };
-
-    mailgun.messages().send(msg, (error, body) => {
-      if (error) {
-        console.error(error);
-        socket.emit('API_ERROR', 'An error has occured with your request');
-      } else {
-        console.log(msg.text);
-        socket.emit('API_RESULT', 'success'); // TODO - replace 'success' with actual api result
-      }
-    });
+    return eventList;
   } catch (error) {
     console.error(error);
-    socket.emit('API_ERROR', 'An error has occured with your request');
   }
-});
+}
 
-async function mailgunForecast(current, forecast, email) {
-  const { data, dates } = forecast;
+async function mailgunEvents(eventList, email) {
 
   const msg = {
     to: email,
     from: 'notifyme.us@gmail.com',
-    subject: 'Your Daily Weather Summary',
-    html: `<div>
-    <p>
-      Here is your custom weather forecast for ${current.town} from NotifyMe-US:
-      <ul>
-        <li>
-          The weather is currently ${current.weather}. The high temperature for today will be ${current.fahrenheitRoundedHigh} degrees Fahrenheit, and the low temperature will be ${current.fahrenheitRoundedLow} degrees Fahrenheit.
-        </li>
-        <li>
-          The humidity will be ${current.humidity}%, and the wind speed will be ${current.windMphFormatted} mph. There will be ${current.cloudCoverage}% cloud coverage.
-        </li>
-      </ul>
-    </p>
-
-    <p>
-      The weather forecast for the next 5 days:
-      <ul>
-        <li>
-          ${dates[0].toLocaleDateString()}: ${data[0].temp} °F with ${data[0].weather}
-        </li>
-        <li>
-          ${dates[1].toLocaleDateString()}: ${data[1].temp} °F with ${data[1].weather}
-        </li>
-        <li>
-          ${dates[2].toLocaleDateString()}: ${data[2].temp} °F with ${data[2].weather}
-        </li>
-        <li>
-          ${dates[3].toLocaleDateString()}: ${data[3].temp} °F with ${data[3].weather}
-        </li>
-        <li>
-          ${dates[4].toLocaleDateString()}: ${data[4].temp} °F with ${data[4].weather}
-        </li>
-      </ul>
-    </p>
-    </div>`,
+    subject: 'Check Out These 5 events happening this week!',
+    html: `<p>Five Upcoming Events in your Area:</p>
+    <ul>
+      ${eventList}
+    </ul>`,
   };
 
   await client.messages.create(process.env.MAILGUN_DOMAIN, msg);
@@ -205,7 +159,7 @@ async function mailgunForecast(current, forecast, email) {
 exports.handler = async () => {
   const subsList = await subs.findAll({
     where: {
-      type: 'weather',
+      type: 'events',
     },
     include: [{
       model: users,
@@ -217,12 +171,12 @@ exports.handler = async () => {
   await Promise.allSettled(subsList.map(async sub => {
     try {
       console.log('THIS IS SUB -------------', sub.User.dataValues);
-      const { zip, email } = sub.User.dataValues;
-      const currentWeather = await getCurrentWeather(zip);
-      const forecast = await getForecast(zip);
-      await mailgunForecast(currentWeather, forecast, email);
-      console.log(`----- SUCCESS sending weather summary to ${email} -----`);
-    } catch(e) {
+      const { city, state, email } = sub.User.dataValues;
+
+      const eventList = await getEvents(city, state);
+      await mailgunEvents( eventList, email);
+      console.log(`----- SUCCESS sending events summary to ${email} -----`);
+    } catch (e) {
       console.log(e.message);
     }
   }));
